@@ -1,135 +1,46 @@
-# dsh-opencode-session
+# dsh-opencode-session (local fork)
 
-A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH)
-plugin that automatically sends the **`x-opencode-session`** request header on
-model calls routed to **OpenCode / OpenCode Go** providers — one stable
-session id per DSH conversation.
+Local fork of [dsh-opencode-session](https://github.com/nobu121/dsh-opencode-session)
+(upstream 0.1.1) as a temporary patch until the `@earendil-works/pi-ai`
+upstream fix (commit `561a2e0`, "fix(ai): send OpenCode session header")
+ships in a DeepSeek Harness release.
 
-## Why
+## Fork deltas
 
-Since 2026-09-05 OpenCode's relay requires an `x-opencode-session` header on
-API requests (tracked upstream in
-[deepseek-harness discussion #5495](https://github.com/deepseek-ai/deepseek-harness/discussions/5495));
-without it, requests fail with `400 MissingSessionID`-style errors. Requests
-that share the same header value are pinned to the same upstream backend,
-which is also what keeps OpenCode's prompt cache warm across the turns of one
-conversation.
+1. **Force override** — while a per-session store is active (explicit model
+   calls on `opencode` / `opencode-go` routes), the patched fetch now
+   force-sets `x-opencode-session` instead of skipping requests that already
+   carry the header. A static header configured on the provider profile can
+   no longer shadow the per-session value.
+2. **Auxiliary-call fallback** — calls that carry no session id (implicit
+   model calls from other plugins, e.g. memory auto-summary) previously
+   passed through untouched and failed with `400 MissingSessionID`. When the
+   new `fallback` config value is set, such requests aimed at the OpenCode
+   gateway (`opencode.ai` and subdomains) get the stable fallback value
+   filled in, unless the request already carries the header.
 
-This plugin:
+Everything else (AsyncLocalStorage plumbing, `llm/stream` waterfall hook,
+fiber-scoped fetch patch, debug logging) is unchanged from upstream.
 
-- **fixes the 400** by always attaching the header to OpenCode(Go) requests,
-- **keeps the cache/affinity benefit** by using a value that is unique **per
-  conversation** and stable across that conversation's turns (by default the
-  DSH session id itself, the same identity the official DeepSeek adapter
-  already sends as `x-deepseek-harness-session-id`),
-- leaves every other provider, and every request that already carries the
-  header, untouched.
-
-## Install
-
-From the npm registry (once published):
-
-```sh
-dsh plugin --profile web add dsh-opencode-session
-```
-
-From a local checkout:
-
-```sh
-dsh plugin --profile web add ./path/to/dsh-opencode-session
-```
-
-Then **fully restart** your dsh profile (bundle layers are read at startup).
-The startup log shows:
+## Install / update
 
 ```
-[opencode-go-session-header] active for providers [opencode, opencode-go] with mode session-id
+dsh plugin --profile web add github:Dessera/dsh-opencode-session
 ```
 
-If you run DSH from a source checkout instead, load it as an overlay:
-`pnpm dsh web --patch ./cordis.patch.yml`.
+To install from a local checkout instead (e.g. for development):
 
-## Configuration
-
-The plugin row lives in the bundle's `cordis.patch.yml`; all keys are optional:
-
-```yaml
-- insert:
-    - id: opencode-go-session-header
-      name: dsh-opencode-session
-      config:
-        providers: [opencode, opencode-go]   # route keys to attach the header to
-        mode: session-id                     # 'session-id' | 'uuid'
-        debug: false
-        debugFile: null                      # optional absolute path
+```
+dsh plugin --profile web add D:\Projects\dsh-opencode-session-fork
 ```
 
-- `providers` — provider route keys whose requests get the header. The
-  defaults cover the pi-ai catalog ids `opencode` and `opencode-go`; add your
-  own route key when you serve OpenCode through a custom provider name.
-- `mode`
-  - `session-id` (default) — header value = the DSH session id of the model
-    call. Unique per conversation, stable across turns, compaction, retries
-    and process restarts.
-  - `uuid` — a random UUID derived once per DSH session id (opaque; kept in
-    memory, so it resets when the process restarts).
-- `debug` — log every streamed call that receives the header via
-  `ctx.logger` (the dsh process console).
-- `debugFile` — optional absolute path. When set, every streamed call that
-  receives the header appends one JSON line
-  (`{"ts","provider","model","session","header","value"}`) to that file —
-  handy when the dsh console is not visible.
+A local-path install materializes as a pnpm `link:` junction, so edits to
+the fork sources take effect on the next full dsh restart — no re-install
+needed. A GitHub install tracks the published commits; re-run the add
+command after the fork receives new commits.
 
-To override configuration in a profile without editing the package, add a
-row with the same id in the profile's own `cordis.patch.yml` (it replaces the
-whole `config`, so restate every key).
+## Retire when upstream lands
 
-## How it works
-
-1. Listens on the `llm/stream` waterfall. A call whose `options.provider`
-   names a configured OpenCode route and which carries a `sessionId` is
-   driven through an `AsyncLocalStorage` store holding the header value.
-2. `globalThis.fetch` is patched once. While such a store is active, the
-   outgoing request receives `x-opencode-session: <value>` (unless it already
-   carries the header — an existing value always wins).
-3. Both registrations are fiber-scoped ctx effects: stopping / updating /
-   unloading the plugin restores the original `fetch` and removes the
-   listener.
-
-Non-OpenCode providers, requests without a `sessionId` (some auxiliary
-hand-built calls), and model discovery requests pass through untouched.
-
-## Notes / limitations
-
-- The header is attached to chat/streaming requests inside an `llm/stream`
-  call. The one-shot model listing used by the Models page
-  (`GET <baseURL>/models`) is a separate flow and does not receive the
-  header; if your OpenCode endpoint also rejects that listing, open an issue.
-- The plugin relies on DSH outbound LLM requests going through the Node
-  global `fetch`. If a future DSH version swaps its network stack, the
-  plugin stops injecting (symptom: the 400 comes back) — uninstall then.
-
-## Development
-
-```sh
-node --check lib/index.js
-npm test        # local behavior tests against an echo server
 ```
-
-## Publishing (for maintainers)
-
-The package is plain ESM JavaScript with zero dependencies; `npm test` runs
-automatically via `prepublishOnly`.
-
-```sh
-npm login                       # once, with your npm account
-npm pack --dry-run              # preview exactly what lands in the tarball
-npm publish                     # files = lib/, cordis.patch.yml, README.md
+dsh plugin --profile web remove dsh-opencode-session
 ```
-
-Before publishing, double-check the name is free on the npm registry and fill
-in `author`, `homepage`, and `repository` in `package.json` if you like.
-
-## License
-
-MIT

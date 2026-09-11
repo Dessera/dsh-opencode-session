@@ -138,7 +138,8 @@ try {
     })
   }
 
-  // 5) An explicit header set by the provider profile is preserved.
+  // 5) The per-session value force-overrides a header preset by the
+  //    provider profile (fork behavior; the session value always wins).
   {
     const session = 'session-22222222-2222-3333-4444-555555555555'
     const next = () => (async function* () {
@@ -152,8 +153,8 @@ try {
     const wrapped = llmStream({ provider: 'opencode-go', model: 'm', sessionId: session }, next)
     const chunks = []
     for await (const chunk of wrapped) chunks.push(chunk)
-    check('caller-provided x-opencode-session header wins', () => {
-      assert.equal(chunks[0].echoed.headers['x-opencode-session'], 'preset-value')
+    check('per-session x-opencode-session overrides a preset header', () => {
+      assert.equal(chunks[0].echoed.headers['x-opencode-session'], session)
     })
   }
 

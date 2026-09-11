@@ -1,7 +1,14 @@
-# dsh-opencode-session layer.
+# dsh-opencode-session layer (local fork).
 #
 # Adds one host plugin row that attaches `x-opencode-session` to model
 # requests routed to OpenCode / OpenCode Go provider profiles.
+#
+# Fork deltas over upstream 0.1.1:
+#   - Session calls FORCE-SET the header, overriding any value already
+#     present (including static provider config headers).
+#   - Session-less auxiliary calls aimed at the OpenCode gateway get the
+#     stable `fallback` value filled in (unless the request already carries
+#     the header).
 #
 # Configuration (row `config`, all optional):
 #   providers: [string]  provider route keys to attach the header to.
@@ -13,6 +20,9 @@
 #                        already travels with each model call — stable across
 #                        turns and restarts, unique per conversation.
 #                        'uuid': a process-stable random uuid per DSH session.
+#   fallback: string     stable opaque value for session-less auxiliary calls
+#                        targeting opencode.ai (e.g. memory-plugin summaries).
+#                        Unset keeps the original pass-through behavior.
 #   debug: true|false    log every streamed call that receives the header
 #                        (via ctx.logger, i.e. the dsh process console).
 #   debugFile: path      optional: append one JSON line per streamed call that
@@ -26,4 +36,5 @@
           - opencode
           - opencode-go
         mode: session-id
+        fallback: dsh-auxiliary-calls
         debug: false
